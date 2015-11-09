@@ -1,0 +1,337 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+	<head>
+		<title>State of the Layout Runtime</title>
+	</head>
+	
+	<body>
+		<h1>State of the Layout Runtime</h1> 
+		
+		<h3>28 September, 2015</h3>
+		
+		<h3>Version 0.1</h3>
+		
+		<p>
+			This document outlines the features and major design points of the Layout Runtime prototype. The prototype is currently under development and is subject to change.
+		</p>
+		
+		<h2>1.0 Outline</h2>
+			<p>
+				The goal of project Panama is to create a standard way to interop with native languages and libraries. <b>Layouts</b> are a key feature of project Panama, they represent how data structures are arranged in memory in the form of facades. Facades are java interfaces that merely represent the underlying data. They provide accessors to read and modify the data. The major components for layouts are:
+				
+				<ol>
+					<li>Groveller: native language parser that generates Layout Descriptor (LD)</li>
+					<li>LD2J: LD file parser that generates facades</li>
+					<li>Layout Runtime: the mechanics of layouts</li>
+				</ol>
+
+				The following describes the general sequence of layouts.			
+			</p>
+			<figure>
+				<img src="pics/Layout_overview2.png" alt="Layout Overview">
+				<figcaption>fig.1 Layout Overview</figcaption>
+			</figure>
+
+		<h2>2.0 Layout Descriptor Language</h2>
+			<p>
+				The <b>Layout Descriptor Language (LDL)</b> is a language that describes how native data is laid out and how to access it (more details <a href="http://danheidinga.github.io/J9-Panama/StateOfTheLDL.html">here</a>). A <b>Layout Description (LD)</b> contains a description of native data structure (written in LDL). Appendix A contains the LDL grammar for the current prototype.
+			</p>	
+		<h2>3.0 Groveller</h2>	
+		
+		<p>
+			The <b>groveller</b> is a parser that reads in native structure definitions and outputs an LD file. The current prototype does not contain a groveller component but there are some ongoing projects to implement a C/C++ groveller.
+		</p>
+		
+		<h2>4.0 LD2J</h2>
+		<h3>NAME</h3>
+		<p>
+			&emsp;&emsp;com.ibm.parser.LD2J.Parser
+		</p>
+		<h3>SYNOPSIS</h3>
+		<p>
+			&emsp;&emsp;Parser [inputFile] [outputDir] [packagePath]<br>
+			<br>
+			Arguments must be in order.
+		</p>
+		
+		<p>
+			<u>inputFile</u><br>
+			&emsp;&emsp;The path of the file that contains the Layout Descriptions<br>
+			<u>outputDir</u><br>
+			&emsp;&emsp;The directory where the java facades will be generated<br>
+			<u>packagePath</u><br>
+			&emsp;&emsp;The default package path for the java facades. Note this is an optional feature.<br>
+		</p>
+		
+		<h3>Description</h3>
+		<p>
+			LD2J is a parser written in Java that reads in a file containing Layout Descriptions and outputs java facades. A facade is created for each structure defined in the LD file.
+		</p>
+		
+		<h3>Example</h3>
+		<p style = "background-color: lightgrey">
+			&emsp;&emsp;java com.ibm.parser.LD2J.Parser /com.ibm.layouts/user/com/user/examples/myline/LD com.ibm.layouts/user/com/user/examples/myline/ com.user.examples.myline
+		</p>
+		
+		<p style = "background-color: lightgrey">
+			A generated facade would look like the following:<br>
+			<br>
+			&emsp;package com.user.examples.myline;<br>
+			<br>
+			&emsp;import com.ibm.layout.Layout;<br>
+			&emsp;import com.ibm.layout.LayoutDesc;<br>
+			&emsp;import com.ibm.layout.LayoutType;<br>
+			<br>
+			&emsp;/*<br>
+			&emsp; * Licensed Materials - Property of IBM,<br>
+			&emsp; * (c) Copyright IBM Corp. 2014  All Rights Reserved<br>
+			&emsp; */<br>
+			<br>
+			&emsp;@LayoutDesc({"start:Point:8","end:Point:8"})<br>
+			&emsp;public interface Line extends Layout {<br>
+			&emsp;&emsp;public long sizeof();<br>
+			<br>
+			&emsp;&emsp;public abstract Point start();<br>
+			<br>
+			&emsp;&emsp;public abstract Point end();<br>
+			<br>
+			&emsp;&emsp;@Override<br>
+			&emsp;&emsp;public String toString();<br>
+			<br>
+			&emsp;}<br>
+		</p>
+		
+	<h2>4.0 Layout Runtime</h2>
+	
+	<h3>4.1 Layout hierarchy and types</h3>
+	<figure>
+		<img src="pics/LayoutHierarchy.png" alt="Layout Hierarchy">
+		<figcaption>fig.2 Layout Hierarchy</figcaption>
+	</figure>
+	
+	<p>
+		The top level type is <b>LayoutType</b>, all layout types inherit from this. LayoutType contains factory methods for instanciating primitive layout arrays, as well as binding a layout to a Location.<br>
+		&emsp;getPrimArray1D(Class&lt?&gt, long)<br>
+		&emsp;getPrimArray2D(Class&lt?&gt, long, long)<br>
+		&emsp;getPrimUserArray1D(Class&ltAE&gt, Class&lt?&gt, long)<br>
+		&emsp;bindLocation(Location)<br>
+	</p>
+	
+	<p>
+		The <b>Layout</b> interface represents a singleton layout. This type defines a complex group of contiguous fields that can be accessed by a single memory address and an offset. All generated facades inherit from Layout. The Layout interface adds the following method:<br>
+		&emsp;getLayout(Class&ltT&gt)<br>
+	</p>
+	
+	<p style = "background-color: lightgrey">
+		<b>Layout instanciation example</b><br>
+		
+		A layout can be created the following way:<br>
+		<br>
+		&emsp;Line l = Layout.getLayout(Line.class);<br>
+		&emsp;//Line is a facade<br>
+		&emsp;//l is a runtime instance of the facade<br>
+	</p>
+		
+	<p style = "background-color: lightgrey">
+		<b>User Defined Layout Example</b><br>
+		<br>
+		A user can subclass the generated facades to add additional functionality.<br>
+		
+		&emsp;//Line is a facade<br>
+		&emsp;//Additional functionality is added in MyLine<br>
+		&emsp;public interface MyLine extends Line {<br>
+		&emsp;&emsp;//default methods to add functionality<br>
+		&emsp;&emsp;public default double length() {<br>
+		&emsp;&emsp;&emsp;int xdiff = end().x() - start().x();<br>
+		&emsp;&emsp;&emsp;int ydiff = end().y() - start().y();<br>
+		&emsp;&emsp;&emsp;return Math.sqrt(xdiff * xdiff + ydiff * ydiff);<br>
+		&emsp;&emsp;}<br>
+		<br>
+		&emsp;&emsp;public default void st(int x, int y) {<br>
+		&emsp;&emsp;&emsp;start().x(x);<br>
+		&emsp;&emsp;&emsp;start().y(y);<br>
+		&emsp;&emsp;}<br>
+		<br>
+		&emsp;&emsp;public default void en(int x, int y) {<br>
+		&emsp;&emsp;&emsp;end().x(x);<br>
+		&emsp;&emsp;&emsp;end().y(y);<br>
+		&emsp;&emsp;}<br>
+		&emsp;}<br>
+		<br>
+		&emsp;MyLine ml = Layout.getLayout(MyLine.class);<br>
+		<br>
+	</p>
+
+	<p>
+		The <b>Array1D</b> and <b>Array2D</b> interface provide an access pattern for uniform fixed-length repeating layout types. Array1D defines a single dimension of repeating layout types where each layout can be accessed with an array base address and an offset calculated by multiplying its size by its index. Array1D contains the following methods:<br>
+		&emsp;getArray1D(Class&ltT&gt, long)<br>
+		&emsp;getUserArray1D(Class$ltAE&gt, Class&ltE&gt, long)<br>
+		&emsp;at(long)<br>
+		&emsp;getLength()<br>
+		&emsp;put(long, T)<br>
+		<br>
+		Array2D defines a two dimensional grid of layouts where each layout can be accessed in row-major order. Each row of the array is the same size.<br>
+		&emsp;getArray2D(Class<T>, long, long)<br>
+		&emsp;at(long, long)<br>
+		&emsp;dim1()<br>
+		&emsp;dim2()<br>
+		&emsp;put(long, long, T)<br>
+	</p>
+	
+	<p style = "background-color: lightgrey">
+		<b>Array Example</b><br>
+		&emsp;//creates a 1D layout array of 10 Points<br>
+		&emsp;Array1D&ltPoint&gt pts = Array1D.getArray1D(Point.class, 10);<br>
+		&emsp;//Point is a facade<br>
+		&emsp;//pts is a generated instance of an Array1D<br>
+	</p>
+
+	<p>
+		The <b>BooleanArray1D ... ShortArray2D</b> are the built-in layout interfaces used to create array layouts of primitive java types. This is a work around created in an attempt to avoid wrapping primitives in Layouts, it might be obsoleted by <a href="http://openjdk.java.net/jeps/218">generics  over primitives</a>. The following shows how they can be used.<br>
+		&emsp;ByteArray1D b = LayoutType.getPrimArray1D(byte.class, 10);<br>
+		<br>
+		Ideally "getPrimArray1D(byte.class, ..." would be pushed down into [Byte, Int, ...]Array1D byte.class. But, the current protoype has one common factory method for primitive arrays so it is placed in the common super type.	
+	</p>
+	
+	<h3>4.2 Layout Factory</h3>
+	<p>
+		Runtime classes of a Layout type are created by the LayoutFactory implemented in LayoutHelper. This LayoutHelper class creates all runtime classes in a separate classLoader (LayoutHelper.ImplClassLoader) in the "com.ibm.layout.gen" package directory. The reason behind this is to protect the generated classes from naming conflicts as well as to ensure that their fields cannot be reflected. The following shows the call hierarchy for <b>loadLayoutClass</b>:<br>
+		&emsp;com.ibm.layout.Array1D.getArray1D(Class&ltT&gt, long)//instanciate 1D array<br>
+		&emsp;com.ibm.layout.Array2D.getArray2D(Class&ltT&gt, long, long)//instanciate for 2D array<br>
+		&emsp;com.ibm.layout.Layout.getLayout(Class&ltT&gt)//instanciate layout<br>
+		&emsp;&emsp;com.ibm.layout.LayoutHelper.genLayoutImpl(Class&ltT&gt)//initializes static fields in the <br>
+		&emsp;&emsp;&emsp;com.ibm.layout.LayoutHelper.ImplClassLoader.loadLayoutClass(Class&lt? extends Layout&gt)//generates runtime layout class<br>
+	</p>
+	
+	<p>
+		The <b>loadLayoutClass</b> method generates the runtime class for the specified layout interface (Class&lt? extends Layout&gt <b>layoutInterface</b>) in the following steps<br>
+		<ol>
+			<li>
+				Return cached class if it has been previously generated by the virtual machine
+			</li>
+			<li>
+				Generate all required classes, meaning, layouts that are referenced by the layoutInterface 
+			</li>
+			<li>
+				Generate the bytecodes for the current layout and define the class (using ClassLoader.defineClass(...))
+			</li>
+		</ol>
+		<br>
+		The factory methods getArray1D, getArray2D and getLayout are responsible for instanciating the generated class.
+	</p>
+	
+	<p>
+		Instances of facades have the following naming convention, "[LayoutName]Impl". For Layout arrays they are "[ElementLayoutName]1DImpl".
+	</p>
+	
+	<p>
+		Bytecode generation is done using the ASM framework. There is no bytecode generation for java primitive arrays, those are loaded from class files stored in the "com.ibm.layout.gen" package.<br>
+	</p>
+	
+	<h3>4.3 Location</h3>
+		<p>
+			Each layout instance is composed of an immutable Location object that represents the addressable memory range. In this current prototype it is composed of two fields, an object and a long.
+		</p>
+	
+		<p>
+			To use a layout, it must be bound to a location using "bindLocation(Location loc)". The Location class has the following constructors:<br>
+			&emsp;Location(byte[])<br>
+			&emsp;Location(Location, long)<br>
+			&emsp;Location(long)<br>
+			<br>
+		</p>	
+			
+		<p>
+			Creating a location as well as binding a location will require security checks to ensure that the layout fits in the location it is bound too and that the location is in a valid memory region. The specific details regarding how 'valid memory region' is defined is one of our main design discussion points that will be addressed in later versions.
+		</p>
+	<h2>Appendix A</h2>
+		<p>
+			The LDL grammar used in the current prototype is as follows:
+		</P>
+		
+		<p>
+			"Qualified Name" { ',' "[Field Name][Type]{'['Number of Elements']'} ':' (Size | 'pointer' | 'Layout' Name)"}
+		</p>
+		
+		<p>
+			where:
+			<ul>
+				<li>
+					<b>Qualified Name</b> is the fully qualified name of the layout being described
+					<ul>
+						<li>for example "com.ibm.shapes.Square"</li>
+					</ul>						
+				</li>	
+				<li>
+					<b>Field Name</b> is the name of the field defined in the layout
+					<ul>
+						<li>if the field name is omitted no accessor is generated for it</li>
+					</ul>
+				</li>
+				<li>
+					<b>Type</b> is the JNI type (jint, jshort, jbyte, etc)
+				</li>
+				<li>
+					<b>Number of Elements</b> specifies the number of elements in an array dimension
+					<ul>
+						<li>Multidimensional arrays are arranged in row-major order</li>
+					</ul>
+				</li>
+				<li>
+					<b>Size</b> is the size of the field in bits
+					<ul>
+						<li>for arrays this is the size of a single element of the leaf type</li>
+						<li>special keyword <b>pointer</b> is used for pointer fields</li> 
+					</ul>
+				</li>
+				<li>
+					<b>Name</b> specifies name of a defined layout
+				</li>
+			</ul>
+		</p>
+		
+		<p style = "background-color: lightgrey">
+			<b>Basic Example</b><br>
+			
+			The following struct "Point2D"<br>
+			<br>
+			&emsp;struct Point {<br>
+			&emsp;&emsp;uint32_t x;<br>
+			&emsp;&emsp;uint32_t y;<br>
+			&emsp;}<br>
+			<br>
+			Would have the corresponding LD:<br>
+			"Point", "x:jint:32", "y:jint:32"<br>
+		</p>
+		
+		<p style = "background-color: lightgrey">
+			<b>LD Array Example</b><br>
+			
+			One can define a layout with array fields by using the following notation.<br>
+			
+			&emsp;struct A {<br>
+			&emsp;&emsp;uint32_t x;<br>
+			&emsp;&emsp;uint32_t y[10]; //this is an array of fields<br>
+			&emsp;}<br>
+			<br>
+			LD:  "A", "x:jint:4", "y[10]:jint:40"<br>
+			<br>
+		</p>
+		
+		<p style = "background-color: lightgrey">
+			<b>Nested fields</b><br>
+			This example shows how to describe nested structures<br>
+			<br>
+			&emsp;struct Line {<br>
+			&emsp;&emsp;Point start;<br>
+			&emsp;&emsp;Point end;<br>
+			&emsp;}<br>
+			<br>
+			LD: "Line", "start:Point:8", "end:Point:8"<br>
+		</p>
+		
+		<p>
+			Note: The grammar used in the prototype is not the latest version described in the State of the LDL document. This grammar will be updated in future versions of the prototype.
+		</p>
+	</body>
+</html>

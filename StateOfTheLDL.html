@@ -1,0 +1,759 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN"
+       "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+	<head>
+		<title>State of the LDL</title>
+	</head>
+	
+	<body>
+
+		<h1>State of Layout Descriptor Language</h1> 
+
+		<h3>15 July, 2015</h3>
+		
+		<h3>Version 0.3</h3>
+		
+		<h3>Tobi Ajila, Angela Lin, Daniel Heidinga, Karl Taylor and Patrick Doyle</h3>
+
+		<p>
+			This is a proposal to specify a <b>layout descriptor language</b> (LDL) for the Java Virtual Machine.
+			The contents of this proposal are a summary of the discussions in the mailing list as well as a
+			general outline for the future direction of this work.
+		</p>
+
+		<h2>Background</h2>
+		
+		<p>
+			Project Panama proposes to create a new standard way to connect the JVM and foreign (non-Java) APIs. The project includes (and is not limited to) the following:
+			<ul>
+				<li>native (JNR-like) function calling from the JVM to C/C++</li>
+				<li>native layouts within or outside the JVM heap</li>
+				<li>native data descriptor for JVM (LDL)</li>
+				<li>header file extraction tools (Groveler)</li>
+				<li>native-oriented JIT optimizations</li>
+				<li>tooling or wrapper interposition for safety</li>
+			</ul>
+		</p>
+		
+		<p>
+			A Java <b>Layout</b> is a representation of a native data structure. A layout can be mapped over an existing structure 
+			in native memory or it can be used to allocate a new structure in memory while providing access to its members. 
+			The sequence below describes a general overview of Layouts.
+		</p>
+		
+		<figure>
+			<img src="pics/Layout_overview.png" alt="Layout Overview">
+			<figcaption>fig.1 Layout Overview</figcaption>
+		</figure>
+		
+		<p>
+			A groveller is a tool that parses files for native structures and their members. The output of the groveller is 
+			a <b>layout descriptor</b> (LD) and stub interfaces. The stub interfaces provide an interface for programmers to use during 
+			development. They contain method headers for accessors but no implementation. The LD is a description of the native 
+			data that the runtime system uses to generate appropriate accessors. The Layout Factory supplies instances of the stub 
+			interface classes at runtime. These instances contain the implementation of all the accessors.
+		</p>
+		
+		<h2>1 Introduction</h2>
+		
+		<p>Panama proposes a new way to interface the JVM with native APIs. To achieve this we will need 
+		to come up with a standard way to describe structured data. Different languages have different ways of 
+		describing data (COBOL comp-5 vs C int) and different platforms interpret the same native types differently 
+		(C/C++ x86-32 long vs x84-64 long). There is a need for a language that can describe native data in a 
+		general way regardless of platform or language. For these reasons we have come up with the layout descriptor 
+		language. The main goals of the language are the following:</p>
+		
+		<ol>
+			<li>
+				Describe data access disciplines
+			</li>
+			<li>
+				Describe the data layout
+			</li>
+			<li>
+				Attach type information to the data
+			</li>
+		</ol>
+		
+		<h2>2 Data Access Disciplines</h2>
+		
+		<h3>2.1 Motivation for Memory Model</h3>
+		<p>There are many diverse languages with specific rules regarding native data access. It is not feasible to describe all the possible data access 
+		disciplines in one language. We want to define a memory model that is familiar to people who are familiar with native languages, and also allows
+		a compiler to make optimizations.
+		 C++11 introduced a <a href="http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2011/n3242.pdf">memory model</a>
+		that describes concurrent interaction between memory locations and bit-fields. This memory model gives 
+		flexibility to compiler designers by permitting interference within the confines of a memory location. It is important to have the ability 
+		to capture this kind of behaviour in the LDL as we could also benefit from similar optimizations. Also, it would mean 
+		that C++ users could expect similar data access behaviour in Panama.</p>
+		
+		<h3>2.2 Memory Model</h3>
+		<h4>2.2.1 Composition of a Layout</h4>
+		<p>
+			A <b>field</b> is defined as a contiguous sequence of bits, where bit zero is the least significant bit (this is a LE-centric bit numbering scheme). 
+			A <b>container</b> is defined as a contiguous sequence of one or more fields. This implies that a field cannot have a greater size than its 
+			enclosing container. There are no other size restrictions on fields. The size of a container must be a multiple of 8 bits. 
+		</p>
+		
+		<figure>
+			<img src="pics/Container_and_field.png" alt="Composition of a Container">
+			<figcaption>fig.2 Composition of a container</figcaption>
+		</figure>
+		
+		<p>
+			A <b>member</b> of a layout can be a container, array, union, or nested layout. A container is the most primitive 
+			form of member.
+		</p>
+		<p>
+			An <b>array</b> is defined as a contiguous sequence
+			of identical member types. Multi-dimensional arrays are laid out in row-major order.
+		</p>
+
+		<p>
+			A <b>union</b> is defined as a group of overlapping member types where the size of the union is the size of its largest member type.  
+		</p>
+
+		<p>
+			A <b>layout</b> is defined as a contiguous sequence of members.
+		</p>
+		<p>
+			Based on the definitions above a member can be composed of other members. The leaf member of any member hierarchy is always a container.
+			A container is the most basic atomic unit, it cannot be composed of another container.
+		</p>
+		
+		<figure>
+			<img src="pics/Layout.png" alt="Composition of a Layout">
+			<figcaption>fig.3 Memory layout of a Layout composed of a container, nested layout, array and a union</figcaption>
+		</figure>
+		
+		<h4>2.2.2 Atomicity and Tearing</h4>
+		<p>
+			An update of a field may overwrite the contents of other fields within the same container. An update of a field 
+			may not overwrite the contents of a field in another container. If the enclosing container is marked as "atomic", another 
+			thread cannot observe the value of fields in the container before the update is complete. Since member types in unions 
+			overlap with one another, atomicity and tearing rules are only enforced for the individual member types. 
+		</p>
+
+		
+		<h3>2.3 Endianness</h3>
+		<p>
+			Endianness is specified in the layout descriptor (LD) at a container granularity, where the endian can be either 
+			big-endian or little-endian. In cases where the data layout is invariant across platforms (e.g., network protocols) 
+			we have just one LD. The bytecode generated from the LD must be portable between platforms. This means that the runtime 
+			system must make the appropriate byte swaps (LEloadInt & BEloadInt) to ensure that the behaviour of the generated 
+			bytecode is consistent across all platforms.
+		</p>
+		
+		<h2>3 Data Layout</h2>
+		<ol>
+			<li>
+				<p>
+					A layout descriptor must be interpreted the same way by all JDKs. This means that there can be no implementation-defined inference of 
+					padding or alignment. Every field and member type must be specified in terms of offset
+					and size. The offset is calculated from the beginning of the enclosing type. E.g. the offset of a field is calculated
+					from the beginning of the enclosing container. The offset must take into account any required padding or alignment. 
+					The LD must describe every piece of memory in a layout. There cannot be any unspecified regions.
+				</p>
+			</li>
+			<li>
+				<p>
+					A layout can have an alignment associated with all allocations of its type. The default alignment of a Layout is recursively defined as the following:
+					The Layout alignment is the maximum alignment of all of its members, where the alignment of a member is the maximum alignment of all of its members. If 
+					a member is a container the alignment is its size rounded up to 2^n.
+				</p>
+				<p>
+					Note: The "2^n" requirement is to ensure that default alignment is register sized. However once the size of a container is larger than the largest register 
+					size this limitation is no longer necessary. This is an area that we can expand on in future discussions. 
+				</p>
+				Layout Alignment = Max(Align(member1),... Align(memberN))<br>
+				&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;= Max(Max(Align(member1_1), Max(Align(member1_2))), ... Align(memberN))<br>
+				&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;= Max(Max(ROUND2N(sizeof(container1_1)), Max(ROUND2N(sizeof(container1_2)))), ... Align(memberN))<br>
+				
+				<p style = "background-color: lightgrey">
+					C Example:<br>
+					<br>
+						&emsp;struct Triangle {<br>
+							&emsp;&emsp;uint8_t triDim;<br>
+							&emsp;&emsp;struct {<br>
+								&emsp;&emsp;&emsp;struct {<br>
+									&emsp;&emsp;&emsp;&emsp;uint32_t x;<br>
+									&emsp;&emsp;&emsp;&emsp;uint32_t y;<br>
+									&emsp;&emsp;&emsp;&emsp;uint32_t z;<br>
+								&emsp;&emsp;&emsp;} point[2];<br>
+							&emsp;&emsp;} line[3];<br>
+						&emsp;};<br>
+						
+						The alignment of the structure above is 4bytes. Therefore alignment is not based on direct member size, but on the largest leaf primitive
+						that the structure is composed of. This is analogous to saying that the alignment of a layout is based on the largest leaf container size. 
+				</p>
+			</li>
+			<li>
+				A layout cannot be recursively defined. This means a layout cannot have a nested type of itself or 
+				of another layout that contains a nested type of itself.
+			</li>
+			<li>
+				All member types in a union begin at offset zero.
+			</li>
+			<li>
+				A variable sized array can be specified as long as the size of the
+				array is provided ahead of time such that it is possible to bounds
+				check the access.  Note, there are many other types of variable
+				sized arrays. This proposal only attempts to provide this specific
+				usage of variable sized arrays. This is an area that we can
+				expand on in future discussions.
+			</li>
+		</ol>
+		
+		<h2>4 Accessor Type specification</h2>
+		<p>
+			This section describes how to view layouts and their members in Java. Except for unions, each member of a layout 
+			(as defined in section 2.2.1) is associated with one type. For a union, each member of the union has one type.  
+		</p>
+		<p>
+			Type informs the generation of accessors for these members. For example, the getter of a nested layout member might return a 
+			layout instance (see 4.1 #2 below).
+		</p>
+		<p>
+			For the purpose of illustration, we have referenced a type called "Layout" below.  "Layout" represents a base type for Layouts. 
+			The specifics of this type are beyond the scope of this document, and are not essential for the following discussions. "Layout" 
+			is defined as an interface in this specification, but it could also be defined as an abstract class. This document does not 
+			suggest that we favour one or another.
+		</p>
+		
+		<h3>4.1 Accessor type categories</h3>
+		<p>
+			There are 5 categories of types: primitive, structured, raw, pointer and opaque.
+		</p>
+		
+		<ol>
+			<li>
+				<p>
+					Primitive types: boolean, byte, char, short, int, long, float, double
+				</p>
+				<p>
+					Associating a primitive type with a layout member indicates that the member can be interpreted as the 
+					corresponding primitive Java type.
+				</p>
+			</li>
+			<li>
+				Structured Types:<br>
+				<p>
+					Structured types are typically associated with layout members that are composites of containers, such as arrays and nested layouts. 
+					A layout member that has a structured type is accessed using a layout. A getter for the member would return a layout instance.
+				</p>
+			</li>
+			<li>
+				Raw:<br>
+				<p>
+					The Raw type is used to provide access to the raw bits of a layout member. This is useful in cases where there are no 
+					suitable Java types to represent the data, such as native types wider than 64 bits. A getter for a Raw member might 
+					provide a ByteBuffer interface to the data, such as:
+				</p>
+				
+				interface Raw extends Layout {<br>
+					&emsp;ByteBuffer getValue();<br>
+				}<br>
+				<br>
+				
+
+			</li>
+			<li>
+				Pointer:<br>
+				<p>
+					This type provides a way to view and dereference native pointers in layouts. It enables Java code to interact
+					with data structures such as native linked lists. In the example below, one could use the Pointer type to walk 
+					all the nodes of a linked list.
+				</p>
+				<p>
+					struct Node {<br>
+					
+						&emsp;uint64_t data;<br>
+						&emsp;struct Node* next;<br>
+					}<br> 
+				</p>
+				<p>
+				This would be done using the following API.
+				<br>
+				interface Pointer<T> extends Layout {<br>
+					&emsp;T deference(); <br>
+					&emsp;void set(Pointer<T> ptr);<br>
+				}<br>
+				</p>
+			</li>
+			<li>
+				 Opaque:<br>
+				
+				<p>
+					An Opaque member type is useful in cases where we want the offset and size of a member represented, but we don't want 
+					any accessors to be generated for it. In the previous version of this document, we stated that an unnamed container 
+					would have this behaviour, but it may be worthwhile to be more explicit. Opaque members could be used when specifying 
+					padding in a layout.
+				</p>
+				
+				
+			
+			</li>
+		</ol>
+		<h3>4.2 Effective Address (EA) Accessor</h3>
+		<p>
+			An EA accessor is analogous to C's "address of a struct field". It allows us to pass along a view to a layout member, 
+			for example, in a calling sequence from C->Java->C, without copying or marshalling the member's data. Other potential uses
+			could be to facilitate casting between layout types.
+		</p>
+		<p>
+			EA accessors do not need to be tied to a particular member type. We could potentially generate them for all members of a layout.
+		</p>
+		<p>
+			The following provides some examples as to how EA should exposed. For this document I will use the term 'address' to describe where a layout is located.
+			<ul>
+				<li>
+					Raw Address - This is a very compact representation but there are major security concerns. There is nothing that ties the raw address to the lifetime
+					of the instance that it represents. Also, it can potentially be modified.
+				</li>
+				<li>
+					
+					Opaque Type with bookkeeping - This provides a type containing an address and a strong reference to the Layout instance. This ensures that the EA can not 
+													survive past the lifetime of the Layout that it represents. In addition, it also enforces that the raw address cannot
+													be seen or modified. However, this adds runtime overhead (accessing address) as well as increases the memory footprint. 
+													That being said, value types (Valhala) could minimize additional footprint costs and also provide the JIT more freedom
+													to register values and improve runtime performance making it the preferred choice.
+					
+				</li>
+			</ul>
+		</p>
+		
+		<h3>4.3 Accessor type rules</h3>
+		
+		<p>
+			The following are the rules for associating type information with Layouts. These rules are in addition to 
+			the previously defined rules in section 2 and 3.
+		</p>
+		
+		<ol>
+			<li>
+				Type information only represents the Java type that is returned, not how the container is loaded or stored.
+			</li>
+			<li>
+				Each container must have an accessor type associated with it.
+			</li>
+			<li>
+				If a container is of type Pointer or Raw, it cannot have fields.
+			</li>
+			<li>
+				The type of a nested layout member is itself. In other words, its accessor must return a layout instance of the same type as the nested layout.
+			</li>
+		</ol>
+		
+		<h3>4.4 Accessor generation</h3>
+		<p>
+			It seems sensible to generate accessors in all cases where pointer, primitive and structured types appear in a LD, 
+			for Raw and EA this may not be the case. This section proposes strategies for generating EA and Raw.
+		</p>	
+		<h4>4.4.1 Generate up front</h4>
+		<ol>
+			<li>
+				Generate Always:<br>
+				
+				<p>
+					Generate EA accessors for every layout member and make an exception where Opaque is specified. The downside is that this greatly increases the size of the class (memory footprint) and adds additional API complexity.
+				</p>
+			</li>
+			<li>
+				Generate when specified:<br>
+				
+				<p>
+					Ensure that all accessor types to be generated are specified in the LD, this also includes EA and Raw. This implies that
+					all required accessor types used must be known when the LD is created. The provider of the LD determines which fields get an EA and it cannot be requested after.
+				</p>
+			</li>
+			<li>
+				EA inner class:<br>
+				
+				<p>
+					Create an inner Class in the Layout that contains all the EA getters. This separates all basic getters and setters from the EA getters and thus reduces API complexity.
+				</p>
+			</li>
+			
+			<li>
+				
+					Two Stub Interfaces:
+					<p>
+						Two separate stub interfaces for Layouts, one with basic LD specified getters and another sub-Interface with EA (and/or Raw). However, JVMs prefer monomorphic callsites and single implementations of interfaces. 
+					</p>
+			</li>
+		</ol>
+
+		<h4>4.4.2 Generate on demand</h4>
+		<p> 
+			<ol>
+				<li>
+					EAFactory factory:
+					<p>
+						&emsp;class EAFactory {<br>
+							&emsp;//detects if member is opaque or non-existent<br>
+							&emsp;&emsp;EA getEA(Layout instance, String memberName);<br>
+							
+							&emsp;&emsp;EA getEA(Layout instance);<br>
+							
+							&emsp;&emsp;EA getEA(Array1D instance, long index);<br>
+							
+							&emsp;&emsp;EA getEA(Array2D instance, long row, long column);<br>
+						&emsp;}<br>
+						
+						<br>
+						The disadvantage is this requires reflection to look up offsets of members when given a member name (could make use of caching techniques to make this faster).
+					</p>
+				</li>
+
+				
+			</ol>
+		</p>
+		
+		<h4>4.4.3 Overview</h4>
+		<table border="1px solid black">
+			<tr>
+				<th>Options</th>
+				<th>JIT Optimizations</th>
+				<th>Runtime Cost</th>
+				<th>Footprint</th>
+				<th>API complexity/usability</th>
+			</tr>
+			<tr>
+				<td>Generate Always</td>
+				<td>Good: <br>Jit can easily inline methods, likely monomorphic</td>
+				<td>Good: <br>No runtime cost to generating methods</td>
+				<td>Poor: <br>Increased class size</td>
+				<td>Poor: <br>Additional EA methods may confuse users who are not familiar with low-level languages</td>
+			</tr>
+			<tr>
+				<td>Generate When Specified</td>
+				<td>Good: <br>Jit can easily inline methods, likely monomorphic</td>
+				<td>Good: <br>No runtime cost to generating methods</td>
+				<td>Fair: <br>Increased class size, but only when specified</td>
+				<td>Poor: <br>Cannot request EA methods that are not specified in the LD </td>
+			</tr>
+			<tr>
+				<td>EA inner class</td>
+				<td>Good: <br>Jit can easily inline methods, likely monomorphic</td>
+				<td>Good: <br>No runtime cost to generating methods</td>
+				<td>Poor:<br>Increased class size</td>
+				<td>Good:<br>Separation of EA methods and other basic methods</td>
+			</tr>
+			<tr>
+				<td>Two Interfaces</td>
+				<td>Poor:<br> Not monomorphic</td>
+				<td>Good: <br>No runtime cost to generating methods</td>
+				<td>Poor:<br> Additional class</td>
+				<td>Good:<br>Separation of EA methods and other basic methods</td>
+			</tr>
+			<tr>
+				<td>EA factory</td>
+				<td>Fair:<br>Acquiring EA is not a simple base + offset operation</td>
+				<td>Poor:<br>Requires reflection to find fields</td>
+				<td>Good:<br>No EA methods in Layout Classes</td>
+				<td>Good:<br>Separation of EA methods and other basic methods</td>
+			</tr>
+		</table>
+		
+		<p>
+			EA inner class appears to be the best choice as it does not increases API complexity and is likely to have good performance.
+		</p>
+		<h4>4.4.4 RAW utility</h4>
+		<p>
+			Raw has been previously defined as an accessor type, but it can also be viewed as a utility type. The are cases where it would be useful to access the raw bits of a layout (copying a layout, overwriting a layout, etc.). The following describes a Raw API that can facilitate this:<br>
+			
+			&emsp;class RAWFactory {<br>
+				&emsp;&emsp;Raw getRaw(Layout instance);<br>
+				
+				&emsp;&emsp;Raw getRaw(Layout instance, EA start, EA end);<br>
+				
+				&emsp;&emsp;Raw getRaw(Array1D instance, long index);<br>
+				
+				&emsp;&emsp;Raw getRaw(Array2D instance, long row, long column);<br>
+				
+			&emsp;}<br>
+			
+			This API makes use of EA to generate Raw objects. The use of this API will be restricted by a security layer as improper use of this functionality may cause the JVM to malfunction. 
+		</p>
+		
+		<h2>5 Grammar</h2>
+		<h3>5.1 Goals</h3>
+			<p>
+				The grammar of the LDL must be able to fully capture the requirements mentioned in sections 2), 3) and 4). It should not contain 
+				any redundant information, and must be easily verifiable. The grammar should also be human-readable and writeable as some users 
+				may need to generate LDL for data structures that are not encoded in a formal language.
+			</p>
+		
+		<h3>5.2 Abstract model</h3>
+			<p>
+				The following describes the kind of information that should be captured in the LDL.
+				<ul>
+					<li>
+						Field
+						<ul>
+							<li>name (optional)</li>
+							<li>size</li>
+							<li>offset</li>
+						</ul>
+					</li>
+					<li>
+						Container
+						<ul>
+							<li>name (optional)</li>
+							<li>size</li>
+							<li>offset</li>
+							<li>endian</li>
+							<li>atomicity flag</li>
+							<li>type information</li>
+							<li>all fields it is composed of</li>
+						</ul>
+					</li>
+					<li>
+						Array
+						<ul>
+							<li>name (optional)</li>
+							<li>size</li>
+							<li>offset</li>
+							<li>type information</li>
+							<li>dimensions</li>
+							<li># of elements in each dimension</li>
+						</ul>
+					</li>
+					<li>
+						NestedLayout
+						<ul>
+							<li>name (optional)</li>
+							<li>type information</li>
+							<li>offset</li>
+						</ul>
+					</li>
+					<li>
+						Union
+						<ul>
+							<li>name (optional)</li>
+							<li>offset</li>
+							<li>all member types it is composed of</li>
+						</ul>
+					</li>
+					<li>
+						Layout
+						<ul>
+							<li>name (optional)</li>
+							<li>all member types it is composed of</li>
+						</ul>
+					</li>
+				</ul>
+			</p>
+		<h3>5.3 Straw-man Grammar syntax</h3>
+		<p>
+			The following grammar is a rough attempt and is subject to change. It is retained from the previous
+			version of this document for the purpose of sharing examples.
+		</p>
+		
+		<p>
+			for layouts:<br>
+			&emsp;layoutName','size','[endianness','][alignment','] //endianness (<, >) LE, BE<br>
+			&emsp;['{'<br>
+				&emsp;&emsp;{(containers | unions)}<br>
+			&emsp;'}']<br>
+			<br>
+			
+			for unions:<br>
+			&emsp;'U:'unionSize [unionName]<br>
+			&emsp;['{'<br>
+				&emsp;&emsp;{containers}<br>
+			&emsp;'},']<br>
+			<br>	
+			
+			for containers:<br>
+			&emsp;[endianess,] ([typeInfo,] containerSize, [containerName,] | layoutName) {'[' numOFElements ']'}<br>
+			&emsp;['{'<br>
+				&emsp;&emsp;{fields}<br>
+			&emsp;'},']<br>			
+			<br>
+			
+			&emsp;for fields:<br>
+			&emsp;&emsp;fieldSize, [fieldName,]<br>
+			<br>
+			for typeInfo:<br>
+			<ul>
+				<li>
+					represents the Java type that accessors can return for a specific container/field
+				</li>
+				<li>
+					specified in "Accessor Type Specification"
+				</li>
+			</ul>
+			<br>
+			for layoutName:<br>
+			<ul>
+				<li>
+					use Java type signatures
+				</li>
+				<li>
+					e.g. Ljava/lang/String;
+				</li>
+			</ul>
+		</p>
+		
+		<h2>6 Examples</h2>		
+			
+		<h3>6.1 Basic Example</h3>
+		
+		<p>The following is a basic structure with two fields 'x' and 'y'. </p>
+		
+		<p>
+			&emsp;struct A {<br>
+				&emsp;&emsp;uint16_t x;<br>
+				&emsp;&emsp;uint16_t y;<br>
+			&emsp;};<br>		
+		</p>
+	
+		<p>This structure produces the following little-endian layout.</p>
+		
+		<p>LD:</p>
+		
+		<p>
+			&emsp;LA;, 32, < { //<-- little-endian<br>
+				&emsp;&emsp;int, 16, x,<br>
+				&emsp;&emsp;int, 16, y,<br>
+			&emsp;}<br>					
+		</p>
+	
+	
+		<h3>6.2 Array Example</h3>
+		
+		<p>The following example shows how a structure of arrays can be described in a layout.</p>
+		
+		<p>
+			&emsp;struct SOA {<br>
+				&emsp;&emsp;uint8_t a[10];<br>
+				&emsp;&emsp;uint16_t b[10][10]; //2-d array<br>
+			&emsp;};<br>
+		</p>
+		
+		<p>LD:</p>
+		
+		<p>
+			&emsp;LSOA;, 210, < {<br>
+				&emsp;&emsp;int, 8[10], a,<br>
+				&emsp;&emsp;int, 16[10][10], b,<br>
+			&emsp;}<br>
+		</p>
+	
+		<h3>6.3 IP Header Example</h3>
+		
+		<p>http://en.wikipedia.org/wiki/IPv4#Header</p>
+		
+		<p>The next example shows the layout of an IPV4Header.</p>
+		
+		<p>LD:</p>
+		
+		<p>
+			&emsp;LIPv4;, 160, > { //<-- big-endian<br>
+				&emsp;&emsp;byte, 8, {<br>
+					&emsp;&emsp;&emsp;4 ihl,<br>
+					&emsp;&emsp;&emsp;4 version,<br>
+				&emsp;&emsp;},<br>
+				&emsp;&emsp;byte, 8, {<br>
+					&emsp;&emsp;&emsp;2 ECN,<br>
+					&emsp;&emsp;&emsp;6 DSCP,<br>
+				&emsp;&emsp;},<br>
+				&emsp;&emsp;short, 16, totLen,<br>
+				&emsp;&emsp;short, 16, iden,<br>
+				&emsp;&emsp;short, 16, {<br>
+					&emsp;&emsp;&emsp;13 fragOff,<br>
+					&emsp;&emsp;&emsp;3 flags,<br>
+				&emsp;&emsp;},<br>
+				&emsp;&emsp;byte, 8, TTL,<br>
+				&emsp;&emsp;byte, 8, Proto,<br>
+				&emsp;&emsp;short, 16, Checksum,<br>
+				&emsp;&emsp;int, 32, srcAddr,<br>
+				&emsp;&emsp;int, 32, destAddr,<br>
+				&emsp;&emsp;int, 32, options,<br>
+			&emsp;}
+		</p>
+		
+		<p>
+			The following is the memory layout of the first 4 bytes:<br>
+			0: version 7 - 4, ihl 3 - 0<br>
+			1: DHCP 7 - 3, ECN 2 - 0<br>
+			2: totLen 15 - 8<br>
+			3: totLen 7 - 0<br>
+		</p>
+	
+		<h3>6.4 Nested Layout</h3>
+		
+		<p>
+			&emsp;struct A {<br>
+				&emsp;&emsp;uint32_t x;<br>
+				&emsp;&emsp;uint32_t y;<br>
+			&emsp;}<br>
+		</p>
+		
+		<p>
+			&emsp;struct B {<br>
+				&emsp;&emsp;struct A xy;<br>
+				&emsp;&emsp;uint32_t z;<br>
+			&emsp;}<br>
+		</p>
+		
+		<p>LD:</p>
+		
+		<p>
+			&emsp;LA;, 64, < {<br>
+				&emsp;&emsp;int, 32, x,<br>
+				&emsp;&emsp;int, 32, y,<br>
+			&emsp;}<br>
+		</p>
+		
+		<p>
+			&emsp;LB;, 96, < {<br>
+				&emsp;&emsp;LA;, xy, //<-- A is nested in B<br>
+				&emsp;&emsp;int, 32, z,<br>
+			&emsp;}<br>
+		</p>
+	
+		<h3>6.5 UDP Packet</h3>
+		
+		<p>http://en.wikipedia.org/wiki/User_Datagram_Protocol</p>
+		
+		<p>LD:</p>
+		
+		<p>
+			&emsp;LUDPPacket;, 224, > {<br>
+				&emsp;&emsp;LIPv4;, ipHeader, //<-- nested struct<br>
+				&emsp;&emsp;short, 16, srcPort,<br>
+				&emsp;&emsp;short, 16, destPort,<br>
+				&emsp;&emsp;short, 16, length,<br>
+				&emsp;&emsp;short, 16, checksum,<br>
+			&emsp;}<br>
+		</p>
+	
+		<h3>6.6 Implicit padding example</h3>
+		
+		<p>On a 64 bit machine the compiler would add 32 bit padding between the two fields shown in the following structure.</p>
+		
+		<p>
+			&emsp;struct A {<br>
+				&emsp;&emsp;uint32_t x;<br>
+				&emsp;&emsp;uint64_t y;<br>
+			&emsp;}<br>
+			
+			<br>
+			This structure would produce the following Layout: <br>
+		</p>
+		
+		<p>LD:</p>
+		
+		<p>
+			&emsp;LA;, 128, < { <br>
+				&emsp;&emsp;int, 32, x,<br>
+				&emsp;&emsp;32, //<-- unnamed fields are used to represent padding<br>
+				&emsp;&emsp;long, 64, y,<br>
+			&emsp;}<br>
+		</p>
+			
+		
+	</body>
+</html>
