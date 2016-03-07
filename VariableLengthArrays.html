@@ -1,0 +1,202 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN"
+       "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+	<head>
+		<title>Variable Length Arrays</title>
+	</head>
+	
+	<body>
+		<h1>Variable Length Arrays</h1>
+		
+		<h2>1) Intro</h2>
+
+		<p>There are many C libraries, interface description languages, file formats and<br />
+		network specifications that define variable sized structures. In order to<br />
+		interact with these, the LDL must be able to represent structures with variable sizes.<br />
+		This document describes some additions that could be made to the<br />
+		existing LDL and Layout Runtime to support variable-length arrays (VLA).</p>
+
+		<p>This document introduces only one kind of VLA, a fixed header repeating tail array.<br />
+		This is a very basic approach but it highlights a few important issues with variable<br />
+		sized layouts. Future documents will expand on this and introduce more complicated<br />
+		types of VLAs with fewer restrictions.</p>
+
+		<h2>2) Fixed header repeating tail</h2>
+
+		<p>This type of VLA provides an access pattern for a single dimension of<br />
+		uniform repeating types, where the number of elements is determined by a value in a<br />
+		separate field (repeat count field) in the preceding fixed header.</p>
+
+		<p>Each array element is accessed with an array base address and an offset calculated<br />
+		by multiplying the element size by its index. This means that in cases where the<br />
+		element size is not padded to a hardware container granularity, container properties<br />
+		such as atomicity can not be enforced.</p>
+
+		<h3>Rules:</h3>
+
+		<ul>
+			<li>The repeat count field must be an integral type (byte, short, int, long, char)</li>
+			<li>The repeat count field cannot be nested in another member</li>
+			<li>The repeat count field must precede the VLA</li>
+			<li>VLA must be the last field in the Layout</li>
+			<li>There can only be one VLA in the enclosing layout</li>
+			<li>A layout containing a VLA can not be nested in another layout &nbsp;</li>
+			<li>The enclosing layout of a VLA is a Variable sized layout</li>
+			<li>The element type of a VLA (or regular array) cannot be a Variable sized&nbsp;layout or a VLA</li>
+			<li>A VLA can not be declared on its own it must be defined within a layout</li>
+		</ul>
+
+		<h2>3) LDL changes</h2>
+
+		<p>In order to support VLAs the LDL must be able to describe the field that determines<br />
+		the length of the VLA. Below is an example with our existing <a href="http://j9java.github.io/panama-docs/StateOfTheLayoutRuntime">layout prototype</a>.</p>
+
+		<p style = "background-color: lightgrey">Example 1: Basic variable sized layout<br />
+		&quot;A&quot;,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; //enclosing layout<br />
+		&quot;w:jint:4&quot;,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; //&lt;-- start of fixed header<br />
+		&quot;x:jint:4&quot;,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; //repeat count field<br />
+		&quot;y:jint:4&quot;,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; //&lt;-- end of fixed header<br />
+		&quot;z:jbyte[x]:0&quot;; //VLA with size determined by field &#39;x&#39;</p>
+
+		<p>Note: we are not proposing this syntax, this is only for demonstration purposes.</p>
+
+		<h2>4) Layout Interface changes</h2>
+
+		<p>The following interfaces are introduced to support VLAs. These are in addition to the<br />
+		interfaces included in the layouts prototype.</p>
+
+		<p>The VLArray type is used to represent a VLA inside a layout. It is not possible to<br />
+		instantiate this type on its own, an instance can only be obtained by a getter method<br />
+		from the enclosing layout.</p>
+
+		<p style = "background-color: lightgrey">public interface VLArray&lt;T extends Layout&gt; extends LayoutType {<br />
+		&nbsp;&nbsp; &nbsp;//no public factory methods<br />
+		&nbsp;&nbsp; &nbsp;//T is the type of the array element<br />
+		&nbsp;&nbsp; &nbsp;<br />
+		&nbsp;&nbsp; &nbsp;//return the value of repeat count field<br />
+		&nbsp;&nbsp; &nbsp;long getVLALength();<br />
+		&nbsp;&nbsp; &nbsp;<br />
+		&nbsp;&nbsp; &nbsp;T at(long index) throws arrayindexoutofboundsexception;<br />
+		&nbsp;&nbsp; &nbsp;<br />
+		&nbsp;&nbsp; &nbsp;void put(long index, T val) throws arrayindexoutofboundsexception;<br />
+		&nbsp;&nbsp; &nbsp;<br />
+		&nbsp;&nbsp; &nbsp;//sizeof VLA in bytes<br />
+		&nbsp;&nbsp; &nbsp;long sizeof();<br />
+		}</p>
+
+		<p>The following type, &quot;[primType]VLArray&quot;, will not be required for specification. It is an<br />
+		inelegant part of the prototype because of java limitations which will be removed by<br />
+		support for <a href="http://openjdk.java.net/jeps/218">Generics over Primitive Types</a>.</p>
+
+		<p style = "background-color: lightgrey">public interface [primType]VLArray extends LayoutType {<br />
+		&nbsp;&nbsp; &nbsp;//no public factory methods<br />
+		&nbsp;&nbsp; &nbsp;//[primType] is the type of the array element<br />
+		&nbsp;&nbsp; &nbsp;<br />
+		&nbsp;&nbsp; &nbsp;//return the value of repeat count field<br />
+		&nbsp;&nbsp; &nbsp;long getVLALength();<br />
+		&nbsp;&nbsp; &nbsp;<br />
+		&nbsp;&nbsp; &nbsp;[primType] at(long index) throws Arrayindexoutofboundsexception;<br />
+		&nbsp;&nbsp; &nbsp;<br />
+		&nbsp;&nbsp; &nbsp;void put(long index, [primType] val) throws Arrayindexoutofboundsexception;<br />
+		&nbsp;&nbsp; &nbsp;<br />
+		&nbsp;&nbsp; &nbsp;//sizeof VLA in bytes<br />
+		&nbsp;&nbsp; &nbsp;long sizeof();<br />
+		}</p>
+
+		<p>A new &quot;bindLocation(Location loc, long repeatCountInitializer)&quot; is added to LayoutType.<br />
+		This method allows a user to specify a value that will be used to initialize the repeat<br />
+		count field when the layout is bound to a location. Also, &quot;isVarSized()&quot; is added to<br />
+		indicate whether the layout is a variable size structure or not.</p>
+
+		<p style = "background-color: lightgrey">public interface LayoutType {<br />
+		&nbsp;&nbsp; &nbsp;<br />
+		&nbsp;&nbsp; &nbsp;//Returns true if contains VLA<br />
+		&nbsp;&nbsp; &nbsp;boolean isVarSized();<br />
+		&nbsp;&nbsp; &nbsp;<br />
+		&nbsp;&nbsp; &nbsp;//if layout is variable sized this operation<br />
+		&nbsp;&nbsp; &nbsp;//will read repeat count field value when binding to location<br />
+		&nbsp;&nbsp; &nbsp;public abstract void bindLocation(Location loc);<br />
+		&nbsp;&nbsp; &nbsp;<br />
+		&nbsp;&nbsp; &nbsp;//Initializes repeat count field of VLA with repeatCountInitializer value.<br />
+		&nbsp;&nbsp; &nbsp;//If the layout is not a variable sized layout this method throws an exception<br />
+		&nbsp;&nbsp; &nbsp;public abstract void bindLocation(Location loc, long repeatCountInitializer)<br />
+		&nbsp;&nbsp; &nbsp;&nbsp;&nbsp;&nbsp; throws UnsupportedOperationException;<br />
+		}</p>
+
+		<h2>5) Key Questions</h2>
+
+		<h3>5.1) Is the repeat count field writable?</h3>
+
+		<ul>
+			<li>yes
+			<ul>
+				<li>&nbsp; makes it easy to construct a Layout containing a VLA as it makes it possible to write in the length after the layout is bound to memory</li>
+			</ul>
+			</li>
+			<li>no
+			<ul>
+				<li>makes it easier to verify that VLAs remain within the bounds that they were allocated in</li>
+				<li>would be easier to optimize</li>
+				<li>increases API complexity (why are some fields read-only and others aren&#39;t?)</li>
+			</ul>
+			</li>
+		</ul>
+
+		<p>&nbsp;&nbsp; &nbsp;</p>
+
+		<ul>
+			<li>yes, but keep track of original repeat count length (capacity)
+			<ul>
+				<li>would be useful in cases where the user wants to track capacity and fill count separately</li>
+				<li>makes it possible to verify that array doesn&#39;t exceed original bounds</li>
+				<li>introduces memory overhead</li>
+			</ul>
+			</li>
+		</ul>
+
+		<p><strong>Answer:</strong><br />
+		The repeat count field is read-only. The behaviour of the simple case should be<br />
+		consistent with future extensions (ie. VLA followed by VLA). Allowing the repeat<br />
+		count field to be writeable would make it possible to introduce gaps in the layout<br />
+		or overflow memory allocated for the VLA.</p>
+
+		<p>---------------------------------------<br />
+		Question to Spec Group:<br />
+		Should we track capacity or not?<br />
+		In Java there are many ways to alias data. Even if we make the repeat count field<br />
+		read-only by only generating getters for it, it doesn&#39;t guarantee that the value will<br />
+		not be modified by other means. Keeping track of capacity would help to protect against<br />
+		cases where aliasing could cause modification of data that leads to overflows, but this<br />
+		increases memory overhead.<br />
+		---------------------------------------</p>
+
+		<h3>5.2) How do we validate the size of a variable sized layout when binding to memory?</h3>
+
+		<p><strong>Answer:</strong><br />
+		In the case where the size of the VLA is not known (bindLocation(Location loc);) the<br />
+		operation will first determine if the fixed header fits within the memory allocated for<br />
+		the layout. If this is true, the repeat count field is read making it possible to do<br />
+		bounds checks on the entire layout. In the other case<br />
+		(bindLocation(Location loc, long repeatCountInitializer);), the size of the entire layout is<br />
+		known at bind time so bounds checks are performed on the layout.</p>
+
+		<h3>5.3) Is length a property of the data or of the interface?</h3>
+
+		<p><strong>Answer:</strong><br />
+		The design decision is that the length is a property of the data and not the interface.<br />
+		This means we can not optimize the instance of the interface (bounds checks of the<br />
+		accessor) based on the length. The reason for this decision is that we don&#39;t want to<br />
+		require that the data be read before the interface is instantiated.</p>
+
+		<h2>6) Summary</h2>
+
+		<p>The &quot;Fixed header repeating tail&quot; VLA is very simple and covers a<br />
+		limited set of use cases, however, these use cases are likely the most common.<br />
+		This this type of VLA is not very useful for complex variable sized<br />
+		structures like a Java Class File. This document serves as a starting point to begin<br />
+		discussions on VLAs, future documents will introduce new types that address a<br />
+		wider range of use cases.</p>
+
+		<p>&nbsp;</p>
+	</body>
+</html>
